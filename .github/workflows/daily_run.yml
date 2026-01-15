@@ -1,0 +1,40 @@
+name: Update Stock Data
+
+on:
+  schedule:
+    # 每天 UTC 时间 09:00 (即北京时间 17:00) 运行
+    - cron: '0 9 * * *'
+  workflow_dispatch: # 允许手动点击按钮触发测试
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+
+    - name: Install dependencies
+      run: |
+        pip install -r scripts/requirements.txt
+
+    - name: Run fetch script
+      run: |
+        python scripts/fetch_data.py
+
+    - name: Commit and push changes
+      run: |
+        git config --global user.name 'github-actions[bot]'
+        git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+        git add data/market_data.json
+        # 只有当数据有变化时才提交，避免空提交报错
+        git commit -m "Auto-update market data $(date +'%Y-%m-%d')" || exit 0
+        git push

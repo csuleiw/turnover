@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>A股全市场每日数据监控</title>
+    <!-- 引入 ECharts -->
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif; margin: 0; padding: 20px; background-color: #f5f5f5; }
+        .container { max-width: 1000px; margin: 0 auto; background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        h1 { text-align: center; color: #333; }
+        #chart { width: 100%; height: 500px; }
+        .footer { text-align: center; margin-top: 20px; font-size: 0.8rem; color: #666; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>A股全市场换手率 & 成交额趋势</h1>
+        <div id="chart"></div>
+        <div class="footer">
+            数据来源: AkShare | 更新机制: GitHub Actions | 每日17:00更新
+        </div>
+    </div>
+
+    <script>
+        // 初始化图表
+        var myChart = echarts.init(document.getElementById('chart'));
+
+        // 获取数据
+        fetch('data/market_data.json')
+            .then(response => response.json())
+            .then(data => {
+                // 解析数据
+                const dates = data.map(item => item.date);
+                const avgTurnover = data.map(item => item.avg_turnover);
+                const totalAmount = data.map(item => item.total_amount);
+                const medianTurnover = data.map(item => item.median_turnover);
+
+                const option = {
+                    tooltip: {
+                        trigger: 'axis',
+                        axisPointer: { type: 'cross' }
+                    },
+                    legend: {
+                        data: ['平均换手率', '中位数换手率', '总成交额(亿)']
+                    },
+                    grid: {
+                        left: '3%', right: '3%', bottom: '3%', containLabel: true
+                    },
+                    xAxis: {
+                        type: 'category',
+                        data: dates,
+                        axisLine: { lineStyle: { color: '#888' } }
+                    },
+                    yAxis: [
+                        {
+                            type: 'value',
+                            name: '换手率 (%)',
+                            position: 'left',
+                            axisLabel: { formatter: '{value} %' }
+                        },
+                        {
+                            type: 'value',
+                            name: '成交额 (亿元)',
+                            position: 'right',
+                            splitLine: { show: false }, // 右轴不显示网格线，防止杂乱
+                            axisLabel: { formatter: '{value}' }
+                        }
+                    ],
+                    series: [
+                        {
+                            name: '平均换手率',
+                            type: 'line',
+                            yAxisIndex: 0,
+                            data: avgTurnover,
+                            smooth: true,
+                            itemStyle: { color: '#ff7043' }
+                        },
+                        {
+                            name: '中位数换手率',
+                            type: 'line',
+                            yAxisIndex: 0,
+                            data: medianTurnover,
+                            smooth: true,
+                            itemStyle: { color: '#ffa726' },
+                            lineStyle: { type: 'dashed' }
+                        },
+                        {
+                            name: '总成交额(亿)',
+                            type: 'bar',
+                            yAxisIndex: 1,
+                            data: totalAmount,
+                            itemStyle: { color: 'rgba(66, 165, 245, 0.5)' }
+                        }
+                    ]
+                };
+
+                myChart.setOption(option);
+            })
+            .catch(error => {
+                console.error('Error fetching data:', error);
+                document.getElementById('chart').innerHTML = '无法加载数据，请确保 data/market_data.json 存在。';
+            });
+
+        // 响应式调整
+        window.addEventListener('resize', myChart.resize);
+    </script>
+</body>
+</html>
