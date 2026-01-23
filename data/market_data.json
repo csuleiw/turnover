@@ -47,5 +47,12 @@
     "median_turnover": 2.48,
     "total_amount": 26237.47,
     "up_ratio": 53.37
+  },
+  {
+    "date": "2026-01-23",
+    "avg_turnover": 4.3717,
+    "median_turnover": 2.94,
+    "total_amount": 31181.08,
+    "up_ratio": 67.9
   }
 ]
