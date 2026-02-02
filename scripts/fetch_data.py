@@ -4,46 +4,65 @@ import json
 import os
 from datetime import datetime
 import pytz
+import time
 
 # 文件路径
 DATA_FILE = 'data/market_data.json'
 
 def get_market_data():
-    print("正在获取A股实时行情(源:新浪)...")
+    print("正在获取A股实时行情(尝试分市场合并策略)...")
     
+    df_all = pd.DataFrame()
+    
+    # 策略：分别获取沪A、深A、京A数据并合并，这比获取全市场数据更稳定
+    # 1. 沪A
     try:
-        # --- 修改点 START ---
-        # 原接口: df = ak.stock_zh_a_spot_em()
-        # 替换为新浪接口 (Sina API)
-        df = ak.stock_zh_a_spot()
-        
-        # 新浪接口返回的是英文列名，需要映射回原代码使用的中文列名
-        # turnoverratio -> 换手率
-        # amount -> 成交额
-        # changepercent -> 涨跌幅
-        # trade -> 最新价
-        rename_map = {
-            'turnoverratio': '换手率',
-            'amount': '成交额',
-            'changepercent': '涨跌幅',
-            'trade': '最新价'
-        }
-        df.rename(columns=rename_map, inplace=True)
-        
-        # 确保数据是数值类型 (防止API返回字符串导致计算报错)
-        numeric_cols = ['换手率', '成交额', '涨跌幅']
-        for col in numeric_cols:
-            if col in df.columns:
-                df[col] = pd.to_numeric(df[col], errors='coerce')
-        # --- 修改点 END ---
-
+        print("  - 获取沪A数据...")
+        df_sh = ak.stock_sh_a_spot_em()
+        if df_sh is not None and not df_sh.empty:
+            df_all = pd.concat([df_all, df_sh], ignore_index=True)
     except Exception as e:
-        print(f"API调用失败: {e}")
+        print(f"  - 沪A获取失败: {e}")
+
+    # 2. 深A
+    try:
+        print("  - 获取深A数据...")
+        df_sz = ak.stock_sz_a_spot_em()
+        if df_sz is not None and not df_sz.empty:
+            df_all = pd.concat([df_all, df_sz], ignore_index=True)
+    except Exception as e:
+        print(f"  - 深A获取失败: {e}")
+        
+    # 3. 京A (可选，防止接口报错影响整体)
+    try:
+        print("  - 获取京A数据...")
+        df_bj = ak.stock_bj_a_spot_em()
+        if df_bj is not None and not df_bj.empty:
+            df_all = pd.concat([df_all, df_bj], ignore_index=True)
+    except Exception as e:
+        print(f"  - 京A获取失败(忽略): {e}")
+
+    # 检查数据是否获取成功
+    if df_all.empty:
+        print("错误：未能获取任何市场数据")
         return None
 
-    # 数据清洗：去除没有换手率的数据（停牌等）
-    # 注意：新浪数据中有时会有NaN，需要清洗
-    df = df[df['换手率'].notna()]
+    print(f"成功获取 {len(df_all)} 条数据")
+
+    # 数据清洗
+    # 确保关键列存在
+    required_cols = ['换手率', '成交额', '涨跌幅']
+    for col in required_cols:
+        if col not in df_all.columns:
+            print(f"错误：缺少关键列 '{col}'，当前列: {df_all.columns.tolist()}")
+            return None
+            
+    # 类型转换 (处理可能的字符串/空值)
+    for col in required_cols:
+        df_all[col] = pd.to_numeric(df_all[col], errors='coerce')
+
+    # 去除没有换手率的数据
+    df = df_all[df_all['换手率'].notna()]
     
     # 核心指标计算
     # 1. 全市场平均换手率
@@ -53,7 +72,6 @@ def get_market_data():
     median_turnover_rate = round(df['换手率'].median(), 4)
     
     # 3. 两市总成交额 (单位：亿元)
-    # 新浪返回的amount单位通常也是元
     total_amount = df['成交额'].sum()
     total_amount_yi = round(total_amount / 100000000, 2)
     
@@ -68,10 +86,10 @@ def get_market_data():
 
     data_point = {
         "date": current_date,
-        "avg_turnover": avg_turnover_rate,     # 平均换手率
-        "median_turnover": median_turnover_rate, # 中位数换手率
-        "total_amount": total_amount_yi,       # 总成交额(亿)
-        "up_ratio": up_ratio                   # 上涨家数占比
+        "avg_turnover": avg_turnover_rate,
+        "median_turnover": median_turnover_rate,
+        "total_amount": total_amount_yi,
+        "up_ratio": up_ratio
     }
     
     return data_point
@@ -90,14 +108,12 @@ def save_data(new_data):
     else:
         history_data = []
 
-    # 简单的去重逻辑：如果日期已存在，则覆盖，否则追加
+    # 去重与更新
     data_dict = {item['date']: item for item in history_data}
     data_dict[new_data['date']] = new_data
     
-    # 转换回列表并按日期排序
     sorted_data = sorted(data_dict.values(), key=lambda x: x['date'])
 
-    # 写入文件
     os.makedirs(os.path.dirname(DATA_FILE), exist_ok=True)
     with open(DATA_FILE, 'w', encoding='utf-8') as f:
         json.dump(sorted_data, f, ensure_ascii=False, indent=2)
@@ -105,7 +121,6 @@ def save_data(new_data):
     print(f"数据已更新: {new_data}")
 
 if __name__ == "__main__":
-    # 建议先在命令行执行: pip install --upgrade akshare
     data = get_market_data()
     if data:
         save_data(data)
