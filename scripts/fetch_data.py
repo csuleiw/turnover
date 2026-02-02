@@ -4,67 +4,69 @@ import json
 import os
 from datetime import datetime
 import pytz
-import time
 
 # 文件路径
 DATA_FILE = 'data/market_data.json'
 
 def get_market_data():
-    print("正在获取A股实时行情(尝试分市场合并策略)...")
+    print("正在获取A股实时行情(源: 新浪财经)...")
     
-    df_all = pd.DataFrame()
-    
-    # 策略：分别获取沪A、深A、京A数据并合并，这比获取全市场数据更稳定
-    # 1. 沪A
     try:
-        print("  - 获取沪A数据...")
-        df_sh = ak.stock_sh_a_spot_em()
-        if df_sh is not None and not df_sh.empty:
-            df_all = pd.concat([df_all, df_sh], ignore_index=True)
-    except Exception as e:
-        print(f"  - 沪A获取失败: {e}")
-
-    # 2. 深A
-    try:
-        print("  - 获取深A数据...")
-        df_sz = ak.stock_sz_a_spot_em()
-        if df_sz is not None and not df_sz.empty:
-            df_all = pd.concat([df_all, df_sz], ignore_index=True)
-    except Exception as e:
-        print(f"  - 深A获取失败: {e}")
+        # 使用新浪接口，避开东方财富(EM)的IP封锁
+        df = ak.stock_zh_a_spot()
         
-    # 3. 京A (可选，防止接口报错影响整体)
-    try:
-        print("  - 获取京A数据...")
-        df_bj = ak.stock_bj_a_spot_em()
-        if df_bj is not None and not df_bj.empty:
-            df_all = pd.concat([df_all, df_bj], ignore_index=True)
+        # 调试：打印前几行和列名，方便排查问题
+        # print(f"API返回列名: {df.columns.tolist()}")
+        
     except Exception as e:
-        print(f"  - 京A获取失败(忽略): {e}")
-
-    # 检查数据是否获取成功
-    if df_all.empty:
-        print("错误：未能获取任何市场数据")
+        print(f"API调用直接失败: {e}")
         return None
 
-    print(f"成功获取 {len(df_all)} 条数据")
+    if df is None or df.empty:
+        print("API返回数据为空")
+        return None
 
-    # 数据清洗
-    # 确保关键列存在
-    required_cols = ['换手率', '成交额', '涨跌幅']
-    for col in required_cols:
-        if col not in df_all.columns:
-            print(f"错误：缺少关键列 '{col}'，当前列: {df_all.columns.tolist()}")
-            return None
-            
-    # 类型转换 (处理可能的字符串/空值)
-    for col in required_cols:
-        df_all[col] = pd.to_numeric(df_all[col], errors='coerce')
-
-    # 去除没有换手率的数据
-    df = df_all[df_all['换手率'].notna()]
+    # --- 核心修复逻辑：列名映射与缺失值计算 ---
     
-    # 核心指标计算
+    # 1. 建立映射字典 (新浪英文名 -> 中文名)
+    rename_map = {
+        'turnoverratio': '换手率',
+        'changepercent': '涨跌幅',
+        'trade': '最新价',
+        'amount': '成交额',
+        'nmc': '流通市值', # nmc通常单位是万股或万元，新浪接口一般是“流通市值(万元)”
+        'mktcap': '总市值'
+    }
+    df.rename(columns=rename_map, inplace=True)
+
+    # 2. 强制转换数值类型，处理非数字字符
+    numeric_cols = ['换手率', '成交额', '涨跌幅', '流通市值']
+    for col in numeric_cols:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+
+    # 3. 【关键修复】如果“换手率”不存在，尝试手动计算
+    # 公式：换手率(%) = (成交额 / 流通市值) * 100
+    # 注意：新浪的 amount 单位通常是“元”，nmc 单位通常是“万元”
+    if '换手率' not in df.columns or df['换手率'].isnull().all():
+        print("警告：API未返回'换手率'字段，正在尝试通过成交额/流通市值计算...")
+        if '成交额' in df.columns and '流通市值' in df.columns:
+            # 成交额(元) / (流通市值(万元) * 10000) * 100
+            # 加上 dropna 防止除以0
+            df['换手率'] = (df['成交额'] / (df['流通市值'] * 10000)) * 100
+            df['换手率'] = df['换手率'].round(4)
+        else:
+            print(f"错误：无法计算换手率，缺少必要字段。现有字段: {df.columns.tolist()}")
+            return None
+
+    # 4. 数据清洗：去除无效数据
+    df = df[df['换手率'].notna()]
+    df = df[df['最新价'] > 0] # 去除价格为0的异常数据
+
+    print(f"有效数据条数: {len(df)}")
+
+    # --- 核心指标计算 ---
+    
     # 1. 全市场平均换手率
     avg_turnover_rate = round(df['换手率'].mean(), 4)
     
@@ -86,10 +88,10 @@ def get_market_data():
 
     data_point = {
         "date": current_date,
-        "avg_turnover": avg_turnover_rate,
-        "median_turnover": median_turnover_rate,
-        "total_amount": total_amount_yi,
-        "up_ratio": up_ratio
+        "avg_turnover": avg_turnover_rate,     # 平均换手率
+        "median_turnover": median_turnover_rate, # 中位数换手率
+        "total_amount": total_amount_yi,       # 总成交额(亿)
+        "up_ratio": up_ratio                   # 上涨家数占比
     }
     
     return data_point
